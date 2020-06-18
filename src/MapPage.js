@@ -5,9 +5,13 @@
  */
 
 import React from "react";
+import { createMqttClient } from "./mqtt-client";
 import { useImmer } from "use-immer";
 import { useSize } from "./useSize";
 import { useWindowDimensions } from "./useWindowDimensions";
+import { useSwimFeed } from "./useSwimFeed";
+import { useGeofilteringSubscriptionManager } from "./useGeofilteringSubscriptionManager";
+
 import ReactMapGL from "react-map-gl";
 import {
   DrawRectangleMode,
@@ -15,7 +19,10 @@ import {
   Editor,
   RENDER_STATE,
 } from "react-map-gl-draw";
+
+// config
 import { mapboxConfig } from "./mapbox.config";
+import { solaceConfig } from "./solace.config";
 
 //img
 import SvgMousePointer from "../img/SvgMousePointer";
@@ -37,15 +44,85 @@ const ReactMapGL_modes = {
     description: `Let's you select, edit, or drag shapes. Click the shape once to select it, and then once the shape is selected click-hold-and-drag the shape's verticies to edit it, or click-hold-and-drag the shape's body to drag it. `,
   },
   drawRectangle: {
-    text: "Draw rectangle mode",
-    description: `Drawing rectangles on the map will filter the SWIM feed this
-               application receives. The filtering is done by Solace using
-              wildcard filtering on the lat/lon coordinate string that's part of the topic
-              the SWIM data is published on. Click once to start drawing, and again to place the shape.`,
+    text: "Draw filters",
+    description: `Draw rectangle shaped filters on the map that will filter the SWIM feed this
+                  application receives. The filtering is done by Solace using
+                  wildcard filtering on the lat/lon coordinate string that's part of the topic
+                  the SWIM data is published on. Click once to start drawing, and again to place the shape.`,
   },
 };
 
 export function MapPage() {
+  /**
+   * mqtt client
+   */
+
+  const [mqttClient, setMqttClient] = React.useState(null);
+
+  // initial setup for mqtt client
+  React.useEffect(() => {
+    async function createMqttSession() {
+      let mqttClientConfig = {
+        hostUrl: solaceConfig.SOLACE_MQTT_HOST_URL,
+        options: {
+          username: solaceConfig.SOLACE_USERNAME,
+          password: solaceConfig.SOLACE_PASSWORD,
+        },
+      };
+
+      let mqttClient = createMqttClient(mqttClientConfig);
+
+      mqttClient = await mqttClient.connect().catch(() => {
+        // handle retry logic here, for this demo just log to console
+        mqttClient.logError("Cannot connect");
+      });
+
+      // set up topic subscriptions to attract relevant event flows
+      try {
+        await mqttClient.subscribe(
+          "FDPS/position/#",
+          { qos: 1 },
+          fdpsFlightPositionEventHandler
+        );
+      } catch (err) {
+        // could handle re-try logic here, but don need to for this demo
+        mqttClient.logError(err);
+      }
+
+      setMqttClient(mqttClient);
+    }
+
+    createMqttSession();
+  }, []); // empty dependencies array, means only runs once
+
+  /**
+   * page data
+   */
+
+  const geofilteringSubscriptionManager = useGeofilteringSubscriptionManager();
+
+  const { session, fdpsFlightPositionEventHandler } = useSwimFeed();
+
+  // update geofilteringSubscriptionManager when mqtt client changes
+  React.useEffect(() => {
+    if (mqttClient) {
+      geofilteringSubscriptionManager.setSubscribe(mqttClient.subscribe);
+    }
+    // else on disconnect, revert to idle state... should be a state machine going to refactor this weekend
+    else {
+      geofilteringSubscriptionManager.setSubscribe(() =>
+        geofilteringSubscriptionManager.logInfo(
+          "Waiting for MQTT client to connect"
+        )
+      );
+      geofilteringSubscriptionManager.setUnsubscribe(() =>
+        geofilteringSubscriptionManager.logInfo(
+          "Waiting for MQTT client to connect"
+        )
+      );
+    }
+  }, [mqttClient]);
+
   /**
    * window sizes
    */
@@ -111,6 +188,7 @@ export function MapPage() {
       mapCoords: map coordinates of the clicked position.
    */
   function onSelect(options) {
+    console.dir(options);
     updateEditorState((draft) => {
       draft.selectedFeatureIndex = options?.selectedFeatureIndex;
     });
@@ -223,7 +301,7 @@ export function MapPage() {
                   </dt>
                   <dd class="flex items-baseline">
                     <div class="text-2xl leading-8 font-semibold text-gray-900">
-                      407
+                      {Object.keys(session.aircrafts).length}
                     </div>
                   </dd>
                 </dl>
@@ -240,7 +318,7 @@ export function MapPage() {
                   </dt>
                   <dd class="flex items-baseline">
                     <div class="text-2xl leading-8 font-semibold text-gray-900">
-                      10,582
+                      {session.messagesReceived}
                     </div>
                   </dd>
                 </dl>
@@ -353,7 +431,9 @@ function FeatureListRow({ item, index }) {
   );
 }
 
-/* utils, in the same file 🤧 */
+/* -+-+-+ pretend this is utils.js, you teleported without pressing a keystroke 🤧 its better this way I promise -+-+-+ */
+
+// react-map-gl-draw styling
 
 function getEditHandleStyle({ feature, state }) {
   switch (state) {
