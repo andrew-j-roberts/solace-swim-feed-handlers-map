@@ -154,6 +154,7 @@ export function createMqttClient({
             draft.setOnEnd = setOnEnd;
             draft.setOnClose = setOnClose;
             // utility functions
+            draft.unsubscribeAll = unsubscribeAll;
             draft.logInfo = logInfo;
             draft.logError = logError;
           })
@@ -279,6 +280,29 @@ export function createMqttClient({
         // else, unsubscription verified
         resolve();
       });
+    });
+  }
+
+  /**
+   * Overloaded MQTT.js Client unsubscribe method.
+   * Extends default unsubscribe behavior by removing any handlers
+   * that were associated with the topic subscription.
+   * https://github.com/mqttjs/MQTT.js/blob/master/README.md#subscribe
+   * @param {string} topic
+   * @param {object} options
+   * @param {any} handler
+   */
+  async function unsubscribeAll() {
+    return new Promise(async (resolve, reject) => {
+      // guard: do not try to unsubscribe if client has not yet been connected
+      if (!client) {
+        logError(`, client is not connected`);
+        reject();
+      }
+      // unsubscribe from all topics on client
+      await Promise.all(
+        subscriptions.map((topicFilter, _) => unsubscribe(topicFilter))
+      );
     });
   }
 

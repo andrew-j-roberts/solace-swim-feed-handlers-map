@@ -1,6 +1,6 @@
 import * as React from "react";
 
-function SvgUpCaretSolid(props) {
+function SvgCaretUpSolid(props) {
   return (
     <svg
       viewBox="0 0 90 59"
@@ -22,5 +22,4 @@ function SvgUpCaretSolid(props) {
   );
 }
 
-export default SvgUpCaretSolid;
-
+export default SvgCaretUpSolid;

@@ -1,6 +1,6 @@
 import * as React from "react";
 
-function SvgDownCaretSolid(props) {
+function SvgCaretDownSolid(props) {
   return (
     <svg
       viewBox="0 0 90 59"
@@ -22,5 +22,4 @@ function SvgDownCaretSolid(props) {
   );
 }
 
-export default SvgDownCaretSolid;
-
+export default SvgCaretDownSolid;

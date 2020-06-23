@@ -1,6 +1,6 @@
 import * as React from "react";
 
-function SvgRightCaretSolid(props) {
+function SvgCaretRightSolid(props) {
   return (
     <svg
       viewBox="0 0 59 90"
@@ -22,5 +22,4 @@ function SvgRightCaretSolid(props) {
   );
 }
 
-export default SvgRightCaretSolid;
-
+export default SvgCaretRightSolid;

@@ -12,7 +12,7 @@ import { useWindowDimensions } from "./useWindowDimensions";
 import { useSwimFeed } from "./useSwimFeed";
 import { useGeofilteringSubscriptionManager } from "./useGeofilteringSubscriptionManager";
 
-import ReactMapGL from "react-map-gl";
+import ReactMapGL, { Marker } from "react-map-gl";
 import {
   DrawRectangleMode,
   EditingMode,
@@ -32,7 +32,8 @@ import SvgAirplane from "../img/SvgAirplane";
 import SvgMail from "../img/SvgMail";
 import SvgMenuRetract from "../img/SvgMenuRetract";
 import SvgMenuExpand from "../img/SvgMenuExpand";
-import SvgArrowDown from "../img/SvgArrowDown";
+import SvgCaretDownSolid from "../img/SvgCaretDownSolid";
+import SvgCaretUpSolid from "../img/SvgCaretUpSolid";
 
 // constants
 const SOLACE_SE_MAPBOX_API_KEY = mapboxConfig.API_KEY;
@@ -77,18 +78,6 @@ export function MapPage() {
         mqttClient.logError("Cannot connect");
       });
 
-      // set up topic subscriptions to attract relevant event flows
-      try {
-        await mqttClient.subscribe(
-          "FDPS/position/#",
-          { qos: 1 },
-          fdpsFlightPositionEventHandler
-        );
-      } catch (err) {
-        // could handle re-try logic here, but don need to for this demo
-        mqttClient.logError(err);
-      }
-
       setMqttClient(mqttClient);
     }
 
@@ -99,14 +88,18 @@ export function MapPage() {
    * page data
    */
 
-  const geofilteringSubscriptionManager = useGeofilteringSubscriptionManager();
-
   const { session, fdpsFlightPositionEventHandler } = useSwimFeed();
 
-  // update geofilteringSubscriptionManager when mqtt client changes
+  const geofilteringSubscriptionManager = useGeofilteringSubscriptionManager(
+    fdpsFlightPositionEventHandler
+  );
+
+  // configure geofilteringSubscriptionManager to respond to MQTT client lifecycle
   React.useEffect(() => {
-    if (mqttClient) {
+    if (mqttClient?.connected) {
       geofilteringSubscriptionManager.setSubscribe(mqttClient.subscribe);
+      geofilteringSubscriptionManager.setUnsubscribe(mqttClient.unsubscribe);
+      geofilteringSubscriptionManager.start();
     }
     // else on disconnect, revert to idle state... should be a state machine going to refactor this weekend
     else {
@@ -121,7 +114,7 @@ export function MapPage() {
         )
       );
     }
-  }, [mqttClient]);
+  }, [mqttClient?.connected]);
 
   /**
    * window sizes
@@ -167,13 +160,16 @@ export function MapPage() {
   });
 
   /*
+    TODO: Going to have to throttle how many times this gets called.  
+
     onUpdate (Function, Optional) - callback when any feature is updated. Receives an object containing the following parameters
       data (Feature[]) - the updated list of GeoJSON features.
       editType (String) - addFeature, addPosition, finishMovePosition
       editContext (Array) - list of edit objects, depend on editType, each object may contain featureIndexes, editHandleIndexes, screenCoords, mapCoords.
   */
   function onUpdate({ data }) {
-    console.log(data);
+    geofilteringSubscriptionManager.onFeaturesUpdate(data);
+
     updateEditorState((draft) => {
       draft.features = data;
     });
@@ -216,7 +212,7 @@ export function MapPage() {
       {editorState.toggleState === "EXPANDED" && (
         <div
           style={{ width: "40ch", minWidth: "40ch" }}
-          className="flex-shrink-0"
+          className="flex flex-col flex-shrink-0 min-h-screen overflow-y-scroll"
         >
           {/* header */}
           <div className="px-4 py-5 sm:p-6">
@@ -244,7 +240,7 @@ export function MapPage() {
               <button
                 className={`${
                   editorState.modeId === "editing"
-                    ? "border-2 border-green-400"
+                    ? "border-2 border-blue-300"
                     : "border border-gray-300"
                 } inline-flex items-center h-12 w-12 mr-2 px-2.5 py-1.5 text-xs leading-4 font-medium rounded text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 transition ease-in-out duration-150`}
                 title="Rectangle tool"
@@ -260,7 +256,7 @@ export function MapPage() {
               <button
                 className={`${
                   editorState.modeId === "drawRectangle"
-                    ? "border-2 border-green-400"
+                    ? "border-2 border-blue-300"
                     : "border border-gray-300"
                 } inline-flex items-center h-12 w-12 mr-2 px-2.5 py-1.5 text-xs leading-4 font-medium rounded text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 transition ease-in-out duration-150`}
                 title="Rectangle tool"
@@ -279,11 +275,25 @@ export function MapPage() {
             </p>
           </div>
           {/* filter lsit */}
-          <div className="px-4 py-5 sm:p-6 h-72">
+          <div className="flex flex-col flex-grow px-4 py-5 sm:p-6">
             <h2 className="text-lg text-gray-800">Active filters</h2>
             <div className="flex flex-col w-full mt-2">
               {editorState.features.map((item, index) => {
-                return <FeatureListRow item={item} index={index} />;
+                return (
+                  <FeatureListRow
+                    item={item}
+                    index={index}
+                    deleteShape={() => {
+                      /* delete from editor */
+                      editorRef.current.deleteFeatures(index);
+                      /* update app state */
+                      updateEditorState((draft) => {
+                        // https://stackoverflow.com/questions/5767325/how-can-i-remove-a-specific-item-from-an-array
+                        draft.features.splice(index, 1);
+                      });
+                    }}
+                  />
+                );
               })}
             </div>
           </div>
@@ -348,6 +358,7 @@ export function MapPage() {
               editHandleStyle={getEditHandleStyle}
               editHandleShape={"circle"}
             />
+            <Markers data={session.aircrafts} />
             {/* toolbar overlay, visible if sidebar is retracted */}
             {editorState.toggleState === "RETRACTED" && (
               <div className="absolute top-0 left-0 p-2 m-4">
@@ -366,7 +377,7 @@ export function MapPage() {
                   <button
                     className={`${
                       editorState.modeId === "editing"
-                        ? "border-2 border-green-400"
+                        ? "border-2 border-blue-300"
                         : "border border-gray-300"
                     } inline-flex mt-2 h-12 w-12 items-center px-2.5 py-1.5 text-xs leading-4 font-medium rounded text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 transition ease-in-out duration-150`}
                     title="Rectangle tool"
@@ -382,7 +393,7 @@ export function MapPage() {
                   <button
                     className={`${
                       editorState.modeId === "drawRectangle"
-                        ? "border-2 border-green-400"
+                        ? "border-2 border-blue-300"
                         : "border border-gray-300"
                     } inline-flex mt-2 h-12 w-12 items-center px-2.5 py-1.5 text-xs leading-4 font-medium rounded text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 transition ease-in-out duration-150`}
                     title="Rectangle tool"
@@ -412,26 +423,120 @@ export function MapPage() {
   );
 }
 
-function FeatureListRow({ item, index }) {
+function AirplaneMarker({ key, longitude, latitude }) {
   return (
-    <div className="flex items-center">
-      <div className="flex items-center justify-center w-12 h-12 p-3">
-        <SvgArrowDown className="h-full" />
+    <Marker key={key} longitude={longitude} latitude={latitude}>
+      <SvgAirplane className="w-10" />
+    </Marker>
+  );
+}
+
+// http://visgl.github.io/react-map-gl/docs/api-reference/marker
+function Markers({ data }) {
+  if (data) {
+    return Object.keys(data).map((aircraftIdentifier) => (
+      <AirplaneMarker
+        key={aircraftIdentifier}
+        longitude={Number(data[aircraftIdentifier].lon)}
+        latitude={Number(data[aircraftIdentifier].lat)}
+      />
+    ));
+  }
+
+  return <div></div>;
+}
+
+function FeatureListRow({ item, index, deleteShape }) {
+  const [expanded, setExpanded] = React.useState(false);
+  return (
+    <div
+      className={`flex flex-col mt-2 p-3 border rounded-md ${
+        expanded ? "shadow-md" : ""
+      }`}
+    >
+      {/* row header */}
+      <div className="flex items-center">
+        {/* row header */}
+        {expanded ? (
+          <button
+            className="flex items-center justify-center w-12 h-8 p-3"
+            title="row expand"
+            onClick={() => {
+              setExpanded(false);
+            }}
+          >
+            <SvgCaretUpSolid className="h-full" />
+          </button>
+        ) : (
+          <button
+            className="flex items-center justify-center w-12 h-8 p-3"
+            title="row collapse"
+            onClick={() => {
+              setExpanded(true);
+            }}
+          >
+            <SvgCaretDownSolid className="h-full" />
+          </button>
+        )}
+        <div className="flex items-center justify-center w-12 h-12 p-3 ml-2">
+          <SvgRectangleEdit className="h-full" />
+        </div>
+        <div className="ml-2">
+          {item.properties.shape} {index}
+        </div>
+        <div className="flex items-center justify-end flex-grow">
+          <button
+            className="w-12 h-12 p-3 text-red-500 fill-current"
+            title="Delete filter rectangle"
+            onClick={() => {
+              deleteShape(index);
+            }}
+          >
+            <SvgTrashcan className="h-full" />
+          </button>
+        </div>
       </div>
-      <div className="flex items-center justify-center w-12 h-12 p-3 ml-2">
-        <SvgRectangleEdit className="h-full" />
-      </div>
-      <div className="ml-2">
-        {item.properties.shape} {index}
-      </div>
-      <div className="flex items-center justify-end flex-grow w-12 h-12 p-3 text-red-500 fill-current">
-        <SvgTrashcan className="h-full" />
+      {/* row body */}
+      <div className={`${expanded ? "" : "hidden"} grid mt-2`}>
+        <h3>Coordinates</h3>
+        <div
+          className="grid mt-2"
+          style={{
+            gridTemplateColumns: "auto 1fr auto",
+            gridTemplateRows: "auto auto auto",
+          }}
+        >
+          {/* top left */}
+          <div className="text-gray-700">100.123</div>
+          {/* top center */}
+          <div></div>
+          {/* top right */}
+          <div className="text-gray-700">100.123</div>
+          {/* middle left */}
+          <div></div>
+          {/* middle center */}
+          <div className="w-full h-16 border-4 border-gray-600 border-dashed"></div>
+          {/* middle right */}
+          <div></div>
+          {/* bottom left */}
+          <div className="text-gray-700">100.123</div>
+          {/* bottom center */}
+          <div></div>
+          {/* bottom right */}
+          <div className="text-gray-700">100.123</div>
+        </div>
+        <h3 className="mt-4">Topic filter</h3>
+        <div className="mt-2 overflow-x-scroll font-mono text-xs bg-gray-100">
+          FDPS/position/KA41979400/ACTIVE/SKW3703/36.384444/-111.965278/445.0/36000.0/-90.0/436.0
+        </div>
       </div>
     </div>
   );
 }
 
 /* -+-+-+ pretend this is utils.js, you teleported without pressing a keystroke 🤧 its better this way I promise -+-+-+ */
+
+// GeoJSON utils
 
 // react-map-gl-draw styling
 
