@@ -4,14 +4,17 @@
  * Based off example here: http://visgl.github.io/react-map-gl/examples/draw-polygon
  */
 
+// React
 import React from "react";
-import { createMqttClient } from "./mqtt-client";
 import { useImmer } from "use-immer";
 import { useSize } from "./useSize";
 import { useWindowDimensions } from "./useWindowDimensions";
-import { useSwimFeed } from "./useSwimFeed";
-import { useGeofilteringSubscriptionManager } from "./useGeofilteringSubscriptionManager";
-
+// FDPS feed
+import { useFdpsFeed } from "./useFdpsFeed";
+import { useFdpsGeofiltering } from "./useFdpsGeofiltering";
+import { createMqttClient } from "./mqtt-client";
+import { solaceConfig } from "./solace.config";
+// Mapbox
 import ReactMapGL, { Marker } from "react-map-gl";
 import {
   DrawRectangleMode,
@@ -19,11 +22,7 @@ import {
   Editor,
   RENDER_STATE,
 } from "react-map-gl-draw";
-
-// config
 import { mapboxConfig } from "./mapbox.config";
-import { solaceConfig } from "./solace.config";
-
 //img
 import SvgMousePointer from "../img/SvgMousePointer";
 import SvgRectangleEdit from "../img/SvgRectangleEdit";
@@ -34,7 +33,6 @@ import SvgMenuRetract from "../img/SvgMenuRetract";
 import SvgMenuExpand from "../img/SvgMenuExpand";
 import SvgCaretDownSolid from "../img/SvgCaretDownSolid";
 import SvgCaretUpSolid from "../img/SvgCaretUpSolid";
-
 // constants
 const SOLACE_SE_MAPBOX_API_KEY = mapboxConfig.API_KEY;
 const CENTER_OF_UNITED_STATES_LAT = 39.828;
@@ -54,11 +52,19 @@ const ReactMapGL_modes = {
 };
 
 export function MapPage() {
-  /**
-   * mqtt client
-   */
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+  // window state
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
-  const [mqttClient, setMqttClient] = React.useState(null);
+  const contentRef = React.useRef(null);
+  const { width: contentWidth, height: contentHeight } = useSize(contentRef);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+  // MQTT client state and lifecycle
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+
+  const [{ mqttClient }, updateState] = useImmer({});
 
   // initial setup for mqtt client
   React.useEffect(() => {
@@ -70,63 +76,43 @@ export function MapPage() {
           password: solaceConfig.SOLACE_PASSWORD,
         },
       };
+      // initialize and connect an mqtt client object
+      const mqttClient = await createMqttClient(mqttClientConfig)
+        .connect()
+        .catch(() => {}); // dev note: retry logic might go here
 
-      let mqttClient = createMqttClient(mqttClientConfig);
-
-      mqttClient = await mqttClient.connect().catch(() => {
-        // handle retry logic here, for this demo just log to console
-        mqttClient.logError("Cannot connect");
+      // state updated to connected client
+      updateState((draft) => {
+        draft.mqttClient = mqttClient;
       });
-
-      setMqttClient(mqttClient);
     }
 
     createMqttSession();
-  }, []); // empty dependencies array, means only runs once
+  }, []); // empty dependencies array, means only runs once when component mounts
 
-  /**
-   * page data
-   */
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+  // Flight Data Processing Systems (FDPS) data
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
-  const { session, fdpsFlightPositionEventHandler } = useSwimFeed();
+  const { session, fdpsFlightPositionEventHandler } = useFdpsFeed();
 
-  const geofilteringSubscriptionManager = useGeofilteringSubscriptionManager(
+  const fdpsGeofilteringSubscriptionManager = useFdpsGeofiltering(
     fdpsFlightPositionEventHandler
   );
 
-  // configure geofilteringSubscriptionManager to respond to MQTT client lifecycle
+  // configure interface between mqttClient and fdpsGeofilteringSubscriptionManager
   React.useEffect(() => {
     if (mqttClient?.connected) {
-      geofilteringSubscriptionManager.setSubscribe(mqttClient.subscribe);
-      geofilteringSubscriptionManager.setUnsubscribe(mqttClient.unsubscribe);
-      geofilteringSubscriptionManager.start();
+      fdpsGeofilteringSubscriptionManager.configureMessagingInterface({
+        subscribe: mqttClient.subscribe,
+        unsubscribeAll: mqttClient.unsubscribeAll,
+      });
     }
-    // else on disconnect, revert to idle state... should be a state machine going to refactor this weekend
-    else {
-      geofilteringSubscriptionManager.setSubscribe(() =>
-        geofilteringSubscriptionManager.logInfo(
-          "Waiting for MQTT client to connect"
-        )
-      );
-      geofilteringSubscriptionManager.setUnsubscribe(() =>
-        geofilteringSubscriptionManager.logInfo(
-          "Waiting for MQTT client to connect"
-        )
-      );
-    }
-  }, [mqttClient?.connected]);
+  }, [mqttClient]);
 
-  /**
-   * window sizes
-   */
-
-  const contentRef = React.useRef(null);
-  const { width: contentWidth, height: contentHeight } = useSize(contentRef);
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-
-  /**
-   * map state and methods
-   */
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+  // react-map-gl ReactMapGL
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
   const [viewport, setViewport] = React.useState({
     latitude: CENTER_OF_UNITED_STATES_LAT,
@@ -145,9 +131,9 @@ export function MapPage() {
     });
   }
 
-  /**
-   * editor ref, state, and methods
-   */
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+  // react-map-gl Editor
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
   const editorRef = React.useRef(null);
 
@@ -159,17 +145,18 @@ export function MapPage() {
     toggleState: "EXPANDED",
   });
 
-  /*
-    TODO: Going to have to throttle how many times this gets called.  
+  // configure interface between react-map-gl Editor and fdpsGeofilteringSubscriptionManager
+  React.useEffect(() => {
+    fdpsGeofilteringSubscriptionManager.onFeaturesUpdate(editorState.features);
+  }, [editorState.features]);
 
+  /*
     onUpdate (Function, Optional) - callback when any feature is updated. Receives an object containing the following parameters
       data (Feature[]) - the updated list of GeoJSON features.
       editType (String) - addFeature, addPosition, finishMovePosition
       editContext (Array) - list of edit objects, depend on editType, each object may contain featureIndexes, editHandleIndexes, screenCoords, mapCoords.
   */
   function onUpdate({ data }) {
-    geofilteringSubscriptionManager.onFeaturesUpdate(data);
-
     updateEditorState((draft) => {
       draft.features = data;
     });

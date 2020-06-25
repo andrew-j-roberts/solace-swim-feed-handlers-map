@@ -14,7 +14,6 @@
     "core-js": "^3.6.5",
     "immer": "^6.0.9",
     "mapbox-gl-draw-rectangle-mode": "^1.0.4",
-    "mqtt": "^3.0.0",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
     "react-map-gl": "^5.2.7",
@@ -25,6 +24,7 @@
     "react-virtualized-auto-sizer": "^1.0.2",
     "react-window": "^1.8.5",
     "regenerator-runtime": "^0.13.5",
+    "solclientjs": "^10.4.0",
     "tailwindcss": "^1.4.6",
     "use-immer": "^0.3.5"
   },

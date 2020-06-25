@@ -1,11 +1,11 @@
 /**
- * useSwimFeedSession.js
+ * useFdpsFeed.js
  * @author Andrew Roberts
  */
 
 import { useImmer } from "use-immer";
 
-export function useSwimFeed() {
+export function useFdpsFeed() {
   /**
    * session object
    */

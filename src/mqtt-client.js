@@ -274,7 +274,7 @@ export function createMqttClient({
         delete draft[topic];
       });
       // unsubscribe from topic on client
-      client.unsubscribe(topic, null, function onUnsubAck(err) {
+      client.unsubscribe(topic, {}, function onUnsubAck(err) {
         // guard: err != null indicates an error occurs if client is disconnecting
         if (err) reject(err);
         // else, unsubscription verified
@@ -284,13 +284,7 @@ export function createMqttClient({
   }
 
   /**
-   * Overloaded MQTT.js Client unsubscribe method.
-   * Extends default unsubscribe behavior by removing any handlers
-   * that were associated with the topic subscription.
-   * https://github.com/mqttjs/MQTT.js/blob/master/README.md#subscribe
-   * @param {string} topic
-   * @param {object} options
-   * @param {any} handler
+   * Unsubscribes the client from all its topic subscriptions
    */
   async function unsubscribeAll() {
     return new Promise(async (resolve, reject) => {
@@ -300,9 +294,17 @@ export function createMqttClient({
         reject();
       }
       // unsubscribe from all topics on client
-      await Promise.all(
-        subscriptions.map((topicFilter, _) => unsubscribe(topicFilter))
+      Object.keys(subscriptions).map((topicFilter, _) =>
+        console.log(topicFilter)
       );
+
+      await Promise.all(
+        Object.keys(subscriptions).map((topicFilter, _) =>
+          unsubscribe(topicFilter)
+        )
+      ).catch((err) => reject(err));
+
+      resolve();
     });
   }
 
