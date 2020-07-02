@@ -1,6 +1,4 @@
 node_modules
 .cache
 dist
-mapbox.config.js
-solace.config.js
 reference-project.html
