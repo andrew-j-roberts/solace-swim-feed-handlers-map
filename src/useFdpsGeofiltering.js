@@ -66,49 +66,37 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
     unsubscribeAll: () => logInfo("unsubscribeAll waiting to be initialized"),
   });
 
-  async function configureMessagingInterface({ subscribe, unsubscribeAll }) {
+  function configureMessagingInterface({ subscribe, unsubscribeAll }) {
     updateMessagingInterface((draft) => {
       draft.subscribe = subscribe;
       draft.unsubscribeAll = unsubscribeAll;
     });
   }
+
   // when this client's messaging interface is updated, try to subscribe to entire feed
   React.useEffect(() => {
-    addFlightPositionSubscription({ topicFilter: "FDPS/position/#" });
+    addFlightPositionSubscription({ topicFilter: "FDPS/position/>" });
   }, [subscribe, unsubscribeAll]);
 
   /**
    * add subscription using fdpsFlightPositionEventHandler as event handler
    * @param {Object} props
    */
-  async function addFlightPositionSubscription({
-    topicFilter,
-    options: { qos = 0 } = { qos: 0 },
-  }) {
-    try {
-      await subscribe(topicFilter, { qos }, fdpsFlightPositionEventHandler);
-    } catch (err) {
-      // could handle re-try logic here, but don need to for this demo
-      logError(err);
-    }
+  function addFlightPositionSubscription({ topicFilter }) {
+    subscribe(topicFilter, fdpsFlightPositionEventHandler);
   }
 
   /**
    * add subscription using fdpsFlightPositionEventHandler as event handler
    * @param {Object} props
    */
-  async function addAllFlightPositionSubscriptions() {
-    await Promise.all(
-      state.filters.rectangles.map((rectangleFeature, _) =>
-        createTopicFilters(rectangleFeature).map((topicFilter) =>
-          addFlightPositionSubscription({
-            topicFilter,
-          })
-        )
+  function addAllFlightPositionSubscriptions() {
+    state.filters.rectangles.map((rectangleFeature, _) =>
+      createTopicFilters(rectangleFeature).map((topicFilter) =>
+        addFlightPositionSubscription({
+          topicFilter,
+        })
       )
-    ).catch((err) =>
-      // could handle re-try logic here, but don need to for this demo
-      logError(err)
     );
   }
 
@@ -118,9 +106,9 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
    * subscriptions to the client
    */
 
-  async function updateSubscriptions() {
+  function updateSubscriptions() {
     // clear subscriptions
-    await unsubscribeAll();
+    unsubscribeAll();
     // add updated topic subscriptions
     const filterRectangleFeatures = Object.keys(state.filters.rectangles);
     // if there are rectangle filters, filter the SWIM feed
@@ -129,7 +117,7 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
     }
     // if there are no active rectangle filters, consume entire SWIM feed
     else {
-      await addFlightPositionSubscription({ topicFilter: "FDPS/position/#" });
+      addFlightPositionSubscription({ topicFilter: "FDPS/position/>" });
     }
   }
 
@@ -171,7 +159,7 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
               topicWildcardFilterDecimalPlaces.longitudeDecimalPlace,
           });
           topicFilters.push(
-            `FDPS/position/+/+/+/${latitudeFilter}/${longitudeFilter}/+/+/+/+`
+            `FDPS/position/*/*/*/${latitudeFilter}/-${longitudeFilter}/*/*/*/*`
           );
         }
       }
@@ -269,19 +257,19 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
     const decimalPointIndex = coordinateArray.indexOf(".");
 
     if (topicWildcardFilterDecimalPlace >= 10) {
-      coordinateArray[decimalPointIndex - 1] = "+";
+      coordinateArray[decimalPointIndex - 1] = "*";
       return coordinateArray.slice(0, decimalPointIndex).join("");
     } else if (topicWildcardFilterDecimalPlace >= 1) {
-      coordinateArray[decimalPointIndex + 1] = "+";
+      coordinateArray[decimalPointIndex + 1] = "*";
       return coordinateArray.slice(0, decimalPointIndex + 2).join("");
     } else if (topicWildcardFilterDecimalPlace >= 0.1) {
-      coordinateArray[decimalPointIndex + 2] = "+";
+      coordinateArray[decimalPointIndex + 2] = "*";
       return coordinateArray.slice(0, decimalPointIndex + 3).join("");
     } else if (topicWildcardFilterDecimalPlace >= 0.01) {
-      coordinateArray[decimalPointIndex + 3] = "+";
+      coordinateArray[decimalPointIndex + 3] = "*";
       return coordinateArray.slice(0, decimalPointIndex + 4).join("");
     } else if (topicWildcardFilterDecimalPlace >= 0.001) {
-      coordinateArray[decimalPointIndex + 4] = "+";
+      coordinateArray[decimalPointIndex + 4] = "*";
       return coordinateArray.slice(0, decimalPointIndex + 5).join("");
     } else {
       return coordinateArray.slice(0, decimalPointIndex + 5).join("");

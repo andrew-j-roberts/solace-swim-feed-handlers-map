@@ -12,10 +12,11 @@ import { useWindowDimensions } from "./useWindowDimensions";
 // FDPS feed
 import { useFdpsFeed } from "./useFdpsFeed";
 import { useFdpsGeofiltering } from "./useFdpsGeofiltering";
-import { createMqttClient } from "./mqtt-client";
+import { createSolaceClient } from "./solace-client";
+//import { createMqttClient } from "./mqtt-client";
 import { solaceConfig } from "./solace.config";
 // Mapbox
-import ReactMapGL, { Marker } from "react-map-gl";
+import MapGL, { Source, Layer } from "react-map-gl";
 import {
   DrawRectangleMode,
   EditingMode,
@@ -24,10 +25,10 @@ import {
 } from "react-map-gl-draw";
 import { mapboxConfig } from "./mapbox.config";
 //img
+import SvgAirplane from "../img/SvgAirplane";
 import SvgMousePointer from "../img/SvgMousePointer";
 import SvgRectangleEdit from "../img/SvgRectangleEdit";
 import SvgTrashcan from "../img/SvgTrashcan";
-import SvgAirplane from "../img/SvgAirplane";
 import SvgMail from "../img/SvgMail";
 import SvgMenuRetract from "../img/SvgMenuRetract";
 import SvgMenuExpand from "../img/SvgMenuExpand";
@@ -61,33 +62,29 @@ export function MapPage() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
-  // MQTT client state and lifecycle
+  // Solace state and lifecycle
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
-  const [{ mqttClient }, updateState] = useImmer({});
+  const [{ solaceClient }, updateState] = useImmer({});
 
-  // initial setup for mqtt client
+  // initial setup for solace client
   React.useEffect(() => {
-    async function createMqttSession() {
-      let mqttClientConfig = {
-        hostUrl: solaceConfig.SOLACE_MQTT_HOST_URL,
-        options: {
-          username: solaceConfig.SOLACE_USERNAME,
-          password: solaceConfig.SOLACE_PASSWORD,
-        },
+    async function createSolaceSession() {
+      // initialize and connect a solace session
+      let solaceClientConfig = {
+        url: solaceConfig.SOLACE_HOST_URL,
+        vpnName: solaceConfig.SOLACE_MESSAGE_VPN,
+        userName: solaceConfig.SOLACE_USERNAME,
+        password: solaceConfig.SOLACE_PASSWORD,
       };
-      // initialize and connect an mqtt client object
-      const mqttClient = await createMqttClient(mqttClientConfig)
-        .connect()
-        .catch(() => {}); // dev note: retry logic might go here
-
+      let solaceClient = createSolaceClient(solaceClientConfig);
+      solaceClient = await solaceClient.connect().catch(() => {}); // dev note: retry logic might go here
       // state updated to connected client
       updateState((draft) => {
-        draft.mqttClient = mqttClient;
+        draft.solaceClient = solaceClient;
       });
     }
-
-    createMqttSession();
+    createSolaceSession();
   }, []); // empty dependencies array, means only runs once when component mounts
 
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
@@ -102,13 +99,13 @@ export function MapPage() {
 
   // configure interface between mqttClient and fdpsGeofilteringSubscriptionManager
   React.useEffect(() => {
-    if (mqttClient?.connected) {
+    if (solaceClient) {
       fdpsGeofilteringSubscriptionManager.configureMessagingInterface({
-        subscribe: mqttClient.subscribe,
-        unsubscribeAll: mqttClient.unsubscribeAll,
+        subscribe: solaceClient.subscribe,
+        unsubscribeAll: solaceClient.unsubscribeAll,
       });
     }
-  }, [mqttClient]);
+  }, [solaceClient]);
 
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
   // react-map-gl ReactMapGL
@@ -261,7 +258,7 @@ export function MapPage() {
               {ReactMapGL_modes[editorState.modeId].description}
             </p>
           </div>
-          {/* filter lsit */}
+          {/* filter list */}
           <div className="flex flex-col flex-grow px-4 py-5 sm:p-6">
             <h2 className="text-lg text-gray-800">Active filters</h2>
             <div className="flex flex-col w-full mt-2">
@@ -327,7 +324,7 @@ export function MapPage() {
       {/* map */}
       <div className="flex-grow h-full">
         <div className="relative w-full h-full" ref={contentRef}>
-          <ReactMapGL
+          <MapGL
             {...viewport}
             width="100%"
             height="100%"
@@ -345,7 +342,20 @@ export function MapPage() {
               editHandleStyle={getEditHandleStyle}
               editHandleShape={"circle"}
             />
-            <Markers data={session.aircrafts} />
+            <Source
+              id="my-data"
+              type="geojson"
+              data={createFeaturesFromFdpsPositions(session.aircrafts)}
+            >
+              <Layer
+                type="symbol"
+                layout={{
+                  "icon-image": "airport-15",
+                  "icon-allow-overlap": true,
+                  "icon-rotate": ["get", "heading"],
+                }}
+              />
+            </Source>
             {/* toolbar overlay, visible if sidebar is retracted */}
             {editorState.toggleState === "RETRACTED" && (
               <div className="absolute top-0 left-0 p-2 m-4">
@@ -403,35 +413,16 @@ export function MapPage() {
                 </div>
               </div>
             )}
-          </ReactMapGL>
+          </MapGL>
         </div>
       </div>
     </div>
   );
 }
 
-function AirplaneMarker({ key, longitude, latitude }) {
-  return (
-    <Marker key={key} longitude={longitude} latitude={latitude}>
-      <SvgAirplane className="w-10" />
-    </Marker>
-  );
-}
+/* -+-+-+ all these things in a single file, you teleported to those files without pressing a keystroke 🤧 -+-+-+ */
 
-// http://visgl.github.io/react-map-gl/docs/api-reference/marker
-function Markers({ data }) {
-  if (data) {
-    return Object.keys(data).map((aircraftIdentifier) => (
-      <AirplaneMarker
-        key={aircraftIdentifier}
-        longitude={Number(data[aircraftIdentifier].lon)}
-        latitude={Number(data[aircraftIdentifier].lat)}
-      />
-    ));
-  }
-
-  return <div></div>;
-}
+// side bar
 
 function FeatureListRow({ item, index, deleteShape }) {
   const [expanded, setExpanded] = React.useState(false);
@@ -521,9 +512,43 @@ function FeatureListRow({ item, index, deleteShape }) {
   );
 }
 
-/* -+-+-+ pretend this is utils.js, you teleported without pressing a keystroke 🤧 its better this way I promise -+-+-+ */
+// GeoJSON
 
-// GeoJSON utils
+function radiansToDegrees(radians) {
+  return radians * (180 / Math.PI);
+}
+
+/**
+ * take data from FDPS feed session and create GeoJSON format features to be rendered in a MapGL layer
+ * @param {Object[]} aircrafts
+ * @returns {Object}
+ */
+function createFeaturesFromFdpsPositions(aircrafts) {
+  return {
+    type: "FeatureCollection",
+    features: Object.keys(aircrafts).map((aircraftIdentifier) => {
+      return {
+        type: "Feature",
+        id: aircraftIdentifier,
+        geometry: {
+          type: "Point",
+          coordinates: [
+            Number(aircrafts[aircraftIdentifier].lon),
+            Number(aircrafts[aircraftIdentifier].lat),
+          ],
+        },
+        properties: {
+          heading: radiansToDegrees(
+            Math.atan(
+              Number(aircrafts[aircraftIdentifier].trackVelocityY) /
+                Number(aircrafts[aircraftIdentifier].trackVelocityX)
+            )
+          ),
+        },
+      };
+    }),
+  };
+}
 
 // react-map-gl-draw styling
 

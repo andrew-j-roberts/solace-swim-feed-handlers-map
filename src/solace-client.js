@@ -10,17 +10,14 @@ import produce from "immer";
  * A factory function that returns a solclientjs session wrapper.
  * If hostUrl or options are not provided, the client will attempt to
  * connect using Solace PubSub+ friendly defaults.
- * @param {string} hostUrl
  * @param {object} options
  */
 export function createSolaceClient({
   // assign defaults if the values aren't included in the provided object,
-  url = "ws://localhost:8000",
+  url = "ws://localhost:80",
   vpnName = "default",
   userName = "default",
   password = "",
-
-  ...rest
 }) {
   /**
    * initialize solclientjs
@@ -33,7 +30,6 @@ export function createSolaceClient({
    * Private reference to the client connection objects
    */
   let session = null;
-  let client = null;
 
   /**
    * Private map between topic subscriptions and their associated handler callbacks.
@@ -73,7 +69,7 @@ export function createSolaceClient({
     const topic = message.getDestination().getName();
     for (const topicSubscription of Object.keys(subscriptions)) {
       if (topicMatchesTopicFilter(topicSubscription, topic)) {
-        subscriptions[topicSubscription](message);
+        subscriptions[topicSubscription]?.handler(message);
       }
     }
   };
@@ -105,7 +101,7 @@ export function createSolaceClient({
     return new Promise((resolve, reject) => {
       // guard: if session is already connected, do not try to connect again.
       if (session !== null) {
-        logError("Error from connect() - already connected.");
+        logError("Error from connect(), already connected.");
         reject();
       }
       // guard: check url protocol
@@ -136,13 +132,23 @@ export function createSolaceClient({
        * configure session event listeners
        */
 
-      //The UP_NOTICE dictates whether the session has been established
+      // UP_NOTICE fires when the session is established
       session.on(solace.SessionEventCode.UP_NOTICE, (sessionEvent) => {
         onUpNotice();
-        resolve();
+        resolve(
+          produce({}, (draft) => {
+            // overloaded solclientjs methods
+            draft.subscribe = subscribe;
+            draft.unsubscribe = unsubscribe;
+            draft.unsubscribeAll = unsubscribeAll;
+            // utility functions
+            draft.logInfo = logInfo;
+            draft.logError = logError;
+          })
+        );
       });
 
-      //The CONNECT_FAILED_ERROR implies a connection failure
+      // CONNECT_FAILED_ERROR fires on connection failure
       session.on(
         solace.SessionEventCode.CONNECT_FAILED_ERROR,
         (sessionEvent) => {
@@ -151,16 +157,14 @@ export function createSolaceClient({
         }
       );
 
-      //DISCONNECTED implies the client was disconnected
-      session.on(solace.SessionEventCode.DISCONNECTED, (sessionEvent) => {
-        onDisconnected();
-      });
+      // DISCONNECTED fires if the session is disconnected
+      session.on(solace.SessionEventCode.DISCONNECTED, onDisconnected);
 
-      //ACKNOWLEDGED MESSAGE implies that the broker has confirmed message receipt
+      // ACKNOWLEDGED MESSAGE fires when the broker sends this session a message received receipt
       session.on(
         solace.SessionEventCode.ACKNOWLEDGED_MESSAGE,
         (sessionEvent) => {
-          log(
+          logError(
             "Delivery of message with correlation key = " +
               sessionEvent.correlationKey +
               " confirmed."
@@ -168,11 +172,11 @@ export function createSolaceClient({
         }
       );
 
-      //REJECTED_MESSAGE implies that the broker has rejected the message
+      // REJECTED_MESSAGE fires if the broker sends this session a rejected message receipt
       session.on(
         solace.SessionEventCode.REJECTED_MESSAGE_ERROR,
         (sessionEvent) => {
-          log(
+          logError(
             "Delivery of message with correlation key = " +
               sessionEvent.correlationKey +
               " rejected, info: " +
@@ -181,85 +185,26 @@ export function createSolaceClient({
         }
       );
 
-      //SUBSCRIPTION ERROR implies that there was an error in subscribing on a topic
+      // SUBSCRIPTION ERROR fires if there's been an error while subscribing on a topic
       session.on(solace.SessionEventCode.SUBSCRIPTION_ERROR, (sessionEvent) => {
-        logError(`Cannot subscribe to topic: ${sessionEvent.correlationKey}`);
+        logError(`Cannot subscribe to topic "${sessionEvent.correlationKey}"`);
         // remove subscription
         subscriptions = produce(subscriptions, (draft) => {
           delete draft[sessionEvent.correlationKey];
         });
       });
 
-      //SUBSCRIPTION_OK implies that a subscription was succesfully applied/removed from the broker
-      session.on(solace.SessionEventCode.SUBSCRIPTION_OK, (sessionEvent) => {
-        log(
-          `Session co-relation-key for event: ${sessionEvent.correlationKey}`
-        );
-        //Check if the topic exists in the map
-        if (topicSubscriptions.get(sessionEvent.correlationKey)) {
-          //If the subscription shows as subscribed, then this is a callback for unsubscripition
-          if (
-            topicSubscriptions.get(sessionEvent.correlationKey).isSubscribed
-          ) {
-            //Remove the topic from the map
-            topicSubscriptions.delete(sessionEvent.correlationKey);
-            log(
-              `Successfully unsubscribed from topic: ${sessionEvent.correlationKey}`
-            );
-          } else {
-            //Otherwise, this is a callback for subscribing
-            topicSubscriptions.get(
-              sessionEvent.correlationKey
-            ).isSubscribed = true;
-            log(
-              `Successfully subscribed to topic: ${sessionEvent.correlationKey}`
-            );
-          }
-        }
-      });
+      // SUBSCRIPTION_OK fires when a subscription was succesfully applied/removed from the broker
+      session.on(solace.SessionEventCode.SUBSCRIPTION_OK, (sessionEvent) => {});
 
-      //Message callback function
-      session.on(solace.SessionEventCode.MESSAGE, (message) => {
-        //Get the topic name from the message's destination
-        let topicName: string = message.getDestination().getName();
+      // MESSAGE fires when this session receives a message
+      session.on(solace.SessionEventCode.MESSAGE, onMessage);
 
-        //Iterate over all subscriptions in the subscription map
-        for (let sub of Array.from(this.topicSubscriptions.keys())) {
-          //Replace all * in the topic filter with a .* to make it regex compatible
-          let regexdSub = sub.replace(/\*/g, ".*");
-
-          //if the last character is a '>', replace it with a .* to make it regex compatible
-          if (sub.lastIndexOf(">") == sub.length - 1)
-            regexdSub = regexdSub
-              .substring(0, regexdSub.length - 1)
-              .concat(".*");
-
-          let matched = topicName.match(regexdSub);
-
-          //if the matched index starts at 0, then the topic is a match with the topic filter
-          if (matched && matched.index == 0) {
-            //Edge case if the pattern is a match but the last character is a *
-            if (regexdSub.lastIndexOf("*") == sub.length - 1) {
-              //Check if the number of topic sections are equal
-              if (regexdSub.split("/").length != topicName.split("/").length)
-                return;
-            }
-            //Proceed with the message callback for the topic subscription if the subscription is active
-            if (
-              this.topicSubscriptions.get(sub) &&
-              this.topicSubscriptions.get(sub).isSubscribed &&
-              this.topicSubscriptions.get(sub).callback != null
-            )
-              console.log(`Got callback for ${sub}`);
-            this.topicSubscriptions.get(sub).callback(message);
-          }
-        }
-      });
       // connect the session
       try {
-        this.session.connect();
+        session.connect();
       } catch (error) {
-        this.log(error.toString());
+        logErro(error);
       }
     });
   }
@@ -272,94 +217,72 @@ export function createSolaceClient({
    * @param {string} topic
    * @param {any} handler
    */
-  async function subscribe(topic, handler) {
-    return new Promise(async (resolve, reject) => {
-      //Check if the session has been established
-      if (!this.session) {
-        logError(
-          "[WARNING] Cannot subscribe because not connected to Solace message router!"
-        );
-        reject();
-      }
-      //Check if the subscription already exists
-      if (this.topicSubscriptions.get(topicName)) {
-        this.log(`[WARNING] Already subscribed to ${topicName}.`);
-        return;
-      }
-      this.log(`Subscribing to ${topicName}`);
-      //Create a subscription object with the callback, upon succesful subscription, the object will be updated
-      let subscriptionObject: SubscriptionObject = new SubscriptionObject(
-        callback,
-        false
-      );
-      this.topicSubscriptions.set(topicName, subscriptionObject);
-      try {
-        //Session subscription
-        this.session.subscribe(
-          solace.SolclientFactory.createTopicDestination(topicName),
-          true, // generate confirmation when subscription is added successfully
-          topicName, // use topic name as correlation key
-          10000 // 10 seconds timeout for this operation
-        );
-      } catch (error) {
-        this.log(error.toString());
-      }
+  function subscribe(topic, handler) {
+    // Check if the session has been established
+    if (!session) {
+      logError("Error from subscribe(), session not connected.");
+      return;
+    }
+    // Check if the subscription already exists
+    if (subscriptions[topic]) {
+      logError(`Error from subscribe(), already subscribed to "${topic}"`);
+      return;
+    }
+    // associate event handler with topic filter on client
+    subscriptions = produce(subscriptions, (draft) => {
+      draft[topic] = { handler, isSubscribed: false };
     });
+    // subscribe session to topic
+    try {
+      session.subscribe(
+        solace.SolclientFactory.createTopicDestination(topic),
+        true, // generate confirmation when subscription is added successfully
+        topic, // use topic name as correlation key
+        10000 // 10 seconds timeout for this operation
+      );
+    } catch (error) {
+      logError(error);
+    }
   }
 
   /**
-   * Overloaded MQTT.js Client unsubscribe method.
-   * Extends default unsubscribe behavior by removing any handlers
-   * that were associated with the topic subscription.
-   * https://github.com/mqttjs/MQTT.js/blob/master/README.md#subscribe
    * @param {string} topic
-   * @param {object} options
-   * @param {any} handler
    */
-  async function unsubscribe(topic) {
-    return new Promise((resolve, reject) => {
-      // guard: do not try to unsubscribe if client has not yet been connected
-      if (!client) {
-        logError(`, client is not connected`);
-        reject();
-      }
-      // remove event handler
-      subscriptions = produce(subscriptions, (draft) => {
-        delete draft[topic];
-      });
-      // unsubscribe from topic on client
-      client.unsubscribe(topic, {}, function onUnsubAck(err) {
-        // guard: err != null indicates an error occurs if client is disconnecting
-        if (err) reject(err);
-        // else, unsubscription verified
-        resolve();
-      });
+  function unsubscribe(topic) {
+    // guard: do not try to unsubscribe if session has not yet been connected
+    if (!session) {
+      logError(`Error unsubscribing, session is not connected`);
+      return;
+    }
+    // remove event handler
+    subscriptions = produce(subscriptions, (draft) => {
+      delete draft[topic];
     });
+    // unsubscribe session from topic filter
+    session.unsubscribe(
+      solace.SolclientFactory.createTopicDestination(topic),
+      true,
+      topic
+    );
   }
 
   /**
    * Unsubscribes the client from all its topic subscriptions
    */
-  async function unsubscribeAll() {
-    return new Promise(async (resolve, reject) => {
-      // guard: do not try to unsubscribe if client has not yet been connected
-      if (!client) {
-        logError(`, client is not connected`);
-        reject();
-      }
-      // unsubscribe from all topics on client
-      Object.keys(subscriptions).map((topicFilter, _) =>
-        console.log(topicFilter)
-      );
+  function unsubscribeAll() {
+    // guard: do not try to unsubscribe if client has not yet been connected
+    if (!session) {
+      logError(`Error from unsubscribeAll(), session not connected`);
+      reject();
+    }
+    // unsubscribe from all topics on client
+    Object.keys(subscriptions).map((topicFilter, _) =>
+      console.log(topicFilter)
+    );
 
-      await Promise.all(
-        Object.keys(subscriptions).map((topicFilter, _) =>
-          unsubscribe(topicFilter)
-        )
-      ).catch((err) => reject(err));
-
-      resolve();
-    });
+    Object.keys(subscriptions).map((topicFilter, _) =>
+      unsubscribe(topicFilter)
+    );
   }
 
   /**
@@ -368,8 +291,7 @@ export function createSolaceClient({
    */
   function logInfo(message) {
     const log = {
-      clientId,
-      username,
+      userName,
       time: new Date().toISOString(),
       msg: message,
     };
@@ -382,8 +304,7 @@ export function createSolaceClient({
    */
   function logError(error) {
     const errorLog = {
-      clientId,
-      username,
+      userName,
       time: new Date().toISOString(),
       error: error,
     };

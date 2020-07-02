@@ -17,8 +17,16 @@ export function useFdpsFeed() {
   /**
    * event handler that integrates geofiltering client with an instance of a Solace compatible client
    */
-  const fdpsFlightPositionEventHandler = (topic, message, packet) =>
-    onFdpsFlightPositionEvent(parseTopic(splitTopic(topic)));
+
+  // SOLACE
+  const fdpsFlightPositionEventHandler = (message) =>
+    onFdpsFlightPositionEvent(
+      parseTopic(splitTopic(message.getDestination().getName()))
+    );
+
+  // MQTT
+  // const fdpsFlightPositionEventHandler = (topic, message, packet) =>
+  //   onFdpsFlightPositionEvent(parseTopic(splitTopic(topic)));
 
   /**
    * update session using incoming fdpsFlightPositionEvents
@@ -26,7 +34,7 @@ export function useFdpsFeed() {
    */
   function onFdpsFlightPositionEvent(fdpsFlightPositionEvent) {
     updateSession((draft) => {
-      // store latest tick for each aircraft
+      // store latest tick for each aircraft if you need this
       draft.aircrafts[
         fdpsFlightPositionEvent.aircraftIdentifier
       ] = fdpsFlightPositionEvent;
