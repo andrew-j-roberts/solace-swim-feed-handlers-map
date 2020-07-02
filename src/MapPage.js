@@ -9,6 +9,7 @@ import React from "react";
 import { useImmer } from "use-immer";
 import { useSize } from "./useSize";
 import { useWindowDimensions } from "./useWindowDimensions";
+import { useThrottle } from "./useThrottle";
 // FDPS feed
 import { useFdpsFeed } from "./useFdpsFeed";
 import { useFdpsGeofiltering } from "./useFdpsGeofiltering";
@@ -34,6 +35,7 @@ import SvgMenuRetract from "../img/SvgMenuRetract";
 import SvgMenuExpand from "../img/SvgMenuExpand";
 import SvgCaretDownSolid from "../img/SvgCaretDownSolid";
 import SvgCaretUpSolid from "../img/SvgCaretUpSolid";
+
 // constants
 const SOLACE_SE_MAPBOX_API_KEY = mapboxConfig.API_KEY;
 const CENTER_OF_UNITED_STATES_LAT = 39.828;
@@ -88,14 +90,24 @@ export function MapPage() {
   }, []); // empty dependencies array, means only runs once when component mounts
 
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
-  // Flight Data Processing Systems (FDPS) data
+  // Flight Data Processing Systems (FDPS) feed
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
 
-  const { session, fdpsFlightPositionEventHandler } = useFdpsFeed();
+  const {
+    session,
+    fdpsFlightPositionEventHandler,
+    clearFdpsSessionAircrafts,
+  } = useFdpsFeed();
+  //const throttledSession = useThrottle(session, 3000);
 
-  const fdpsGeofilteringSubscriptionManager = useFdpsGeofiltering(
-    fdpsFlightPositionEventHandler
-  );
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+  // FDPS Geofiltering Subscription Manager
+  // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+
+  const {
+    fdpsGeofilteringSubscriptionManager,
+    featureSubscriptionsMap,
+  } = useFdpsGeofiltering(fdpsFlightPositionEventHandler);
 
   // configure interface between mqttClient and fdpsGeofilteringSubscriptionManager
   React.useEffect(() => {
@@ -157,6 +169,7 @@ export function MapPage() {
     updateEditorState((draft) => {
       draft.features = data;
     });
+    clearFdpsSessionAircrafts();
   }
 
   /*
@@ -168,7 +181,6 @@ export function MapPage() {
       mapCoords: map coordinates of the clicked position.
    */
   function onSelect(options) {
-    console.dir(options);
     updateEditorState((draft) => {
       draft.selectedFeatureIndex = options?.selectedFeatureIndex;
     });
@@ -184,6 +196,7 @@ export function MapPage() {
         // https://stackoverflow.com/questions/5767325/how-can-i-remove-a-specific-item-from-an-array
         draft.features.splice(selectedIndex, 1);
       });
+      clearFdpsSessionAircrafts();
     }
   }
 
@@ -268,9 +281,9 @@ export function MapPage() {
                     item={item}
                     index={index}
                     deleteShape={() => {
-                      /* delete from editor */
+                      // delete from editor
                       editorRef.current.deleteFeatures(index);
-                      /* update app state */
+                      //update app state
                       updateEditorState((draft) => {
                         // https://stackoverflow.com/questions/5767325/how-can-i-remove-a-specific-item-from-an-array
                         draft.features.splice(index, 1);
@@ -281,6 +294,7 @@ export function MapPage() {
               })}
             </div>
           </div>
+
           {/* metrics */}
           <div class="px-4 py-5 sm:p-6">
             <h2 className="text-lg text-gray-800">Session metrics</h2>
@@ -328,7 +342,7 @@ export function MapPage() {
             {...viewport}
             width="100%"
             height="100%"
-            mapStyle="mapbox://styles/mapbox/satellite-streets-v11"
+            mapStyle="mapbox://styles/mapbox/dark-v10"
             mapboxApiAccessToken={SOLACE_SE_MAPBOX_API_KEY}
             onViewportChange={(nextViewport) => setViewport(nextViewport)}
           >
@@ -485,7 +499,7 @@ function FeatureListRow({ item, index, deleteShape }) {
           }}
         >
           {/* top left */}
-          <div className="text-gray-700">100.123</div>
+          <div className="text-gray-700">{}</div>
           {/* top center */}
           <div></div>
           {/* top right */}
@@ -503,10 +517,7 @@ function FeatureListRow({ item, index, deleteShape }) {
           {/* bottom right */}
           <div className="text-gray-700">100.123</div>
         </div>
-        <h3 className="mt-4">Topic filter</h3>
-        <div className="mt-2 overflow-x-scroll font-mono text-xs bg-gray-100">
-          FDPS/position/KA41979400/ACTIVE/SKW3703/36.384444/-111.965278/445.0/36000.0/-90.0/436.0
-        </div>
+        <h3 className="mt-4">Associated topic filter</h3>
       </div>
     </div>
   );

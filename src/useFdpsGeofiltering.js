@@ -22,9 +22,11 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
 
   const [state, updateState] = useImmer({
     filters: {
-      rectangles: {},
+      rectangles: [],
     },
   });
+
+  const [featureSubscriptionsMap, updateFeatureSubscriptionsMap] = useImmer([]);
 
   /**
    * useDebounce, https://dev.to/gabe_ragland/debouncing-with-react-hooks-jci
@@ -91,13 +93,17 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
    * @param {Object} props
    */
   function addAllFlightPositionSubscriptions() {
-    state.filters.rectangles.map((rectangleFeature, _) =>
-      createTopicFilters(rectangleFeature).map((topicFilter) =>
-        addFlightPositionSubscription({
-          topicFilter,
+    updateFeatureSubscriptionsMap((draft) => {
+      draft.splice(0, featureSubscriptionsMap.length);
+      state.filters.rectangles.map((rectangleFeature, _) =>
+        createTopicFilters(rectangleFeature).map((topicFilter) => {
+          addFlightPositionSubscription({
+            topicFilter,
+          });
+          draft.push(topicFilter);
         })
-      )
-    );
+      );
+    });
   }
 
   /**
@@ -109,15 +115,16 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
   function updateSubscriptions() {
     // clear subscriptions
     unsubscribeAll();
-    // add updated topic subscriptions
-    const filterRectangleFeatures = Object.keys(state.filters.rectangles);
     // if there are rectangle filters, filter the SWIM feed
-    if (filterRectangleFeatures.length > 0) {
+    if (state.filters.rectangles.length > 0) {
       addAllFlightPositionSubscriptions();
     }
     // if there are no active rectangle filters, consume entire SWIM feed
     else {
       addFlightPositionSubscription({ topicFilter: "FDPS/position/>" });
+      updateFeatureSubscriptionsMap((draft) => {
+        draft.splice(0, featureSubscriptionsMap.length);
+      });
     }
   }
 
@@ -166,7 +173,8 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
     }
 
     // can be extended to handle different shapes here
-    console.dir(topicFilters);
+
+    console.info("Feature added, subscribing to array of topic filters");
 
     return topicFilters;
   }
@@ -337,12 +345,17 @@ export function useFdpsGeofiltering(fdpsFlightPositionEventHandler) {
   }
 
   return {
-    // messaging interface
-    configureMessagingInterface,
-    // react-map-gl-draw interface
-    onFeaturesUpdate,
-    // utils
-    logInfo,
-    logError,
+    // client
+    fdpsGeofilteringSubscriptionManager: {
+      // messaging interface
+      configureMessagingInterface,
+      // react-map-gl-draw interface
+      onFeaturesUpdate,
+      // utils
+      logInfo,
+      logError,
+    },
+    //extra data
+    featureSubscriptionsMap,
   };
 }

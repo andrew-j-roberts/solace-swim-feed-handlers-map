@@ -68,5 +68,11 @@ export function useFdpsFeed() {
     return topic.split("/");
   }
 
-  return { session, fdpsFlightPositionEventHandler };
+  function clearFdpsSessionAircrafts() {
+    updateSession((draft) => {
+      draft.aircrafts = {};
+    });
+  }
+
+  return { session, fdpsFlightPositionEventHandler, clearFdpsSessionAircrafts };
 }
