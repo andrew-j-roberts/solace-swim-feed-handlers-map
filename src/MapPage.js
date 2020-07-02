@@ -9,7 +9,6 @@ import React from "react";
 import { useImmer } from "use-immer";
 import { useSize } from "./useSize";
 import { useWindowDimensions } from "./useWindowDimensions";
-import { useThrottle } from "./useThrottle";
 // FDPS feed
 import { useFdpsFeed } from "./useFdpsFeed";
 import { useFdpsGeofiltering } from "./useFdpsGeofiltering";
@@ -98,7 +97,6 @@ export function MapPage() {
     fdpsFlightPositionEventHandler,
     clearFdpsSessionAircrafts,
   } = useFdpsFeed();
-  //const throttledSession = useThrottle(session, 3000);
 
   // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
   // FDPS Geofiltering Subscription Manager
